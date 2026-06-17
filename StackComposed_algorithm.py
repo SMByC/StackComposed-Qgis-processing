@@ -27,7 +27,8 @@ from qgis.core import (QgsProcessing,
                        QgsProcessingAlgorithm,
                        QgsProcessingParameterMultipleLayers,
                        QgsProcessingParameterRasterDestination, QgsProcessingParameterNumber,
-                       QgsProcessingParameterEnum, QgsProcessingParameterDefinition)
+                       QgsProcessingParameterEnum, QgsProcessingParameterDefinition,
+                       QgsProcessingParameterString)
 
 from StackComposed.core import stack_composed
 
@@ -49,12 +50,13 @@ class StackComposedAlgorithm(QgsProcessingAlgorithm):
     DATA_TYPE = 'DATA_TYPE'
     NUM_PROCESS = 'NUM_PROCESS'
     CHUNKS = 'CHUNKS'
+    PREPROC = 'PREPROC'
     OUTPUT = 'OUTPUT'
 
-    STAT_KEYS = ['median', 'mean', 'gmean', 'max', 'min', 'std', 'valid_pixels', 'last_pixel', 'jday_last_pixel',
+    STAT_KEYS = ['median', 'mean', 'gmean', 'max', 'min', 'sum', 'std', 'valid_pixels', 'last_pixel', 'jday_last_pixel',
                  'jday_median', 'linear_trend']
-    STAT_DESC = ['Median', 'Arithmetic mean', 'Geometric mean', 'Maximum value', 'Minimum value', 'Standard deviation',
-                 'Number of valid pixels', 'Last valid pixel (required filename as metadata)',
+    STAT_DESC = ['Median', 'Arithmetic mean', 'Geometric mean', 'Maximum value', 'Minimum value', 'Sum',
+                 'Standard deviation', 'Number of valid pixels', 'Last valid pixel (required filename as metadata)',
                  'Julian day of the last valid pixel (required filename as metadata)',
                  'Julian day of the median value (required filename as metadata)',
                  'Linear trend least-squares method (required filename as metadata)']
@@ -141,7 +143,7 @@ class StackComposedAlgorithm(QgsProcessingAlgorithm):
             QgsProcessingParameterMultipleLayers(
                 self.INPUTS,
                 self.tr('All input raster files to process'),
-                QgsProcessing.TypeRaster,
+                QgsProcessing.SourceType.TypeRaster,
             )
         parameter_input.setMinimumNumberInputs(2)
         self.addParameter(parameter_input)
@@ -159,7 +161,7 @@ class StackComposedAlgorithm(QgsProcessingAlgorithm):
             QgsProcessingParameterNumber(
                 self.BAND,
                 self.tr('Set the band number to process'),
-                type=QgsProcessingParameterNumber.Integer,
+                type=QgsProcessingParameterNumber.Type.Integer,
                 minValue=1,
                 defaultValue=1,
                 optional=False
@@ -170,7 +172,7 @@ class StackComposedAlgorithm(QgsProcessingAlgorithm):
             QgsProcessingParameterNumber(
                 self.NODATA_INPUT,
                 self.tr('Input pixel value to treat as "nodata"'),
-                type=QgsProcessingParameterNumber.Integer,
+                type=QgsProcessingParameterNumber.Type.Integer,
                 defaultValue=None,
                 optional=True
             )
@@ -190,23 +192,32 @@ class StackComposedAlgorithm(QgsProcessingAlgorithm):
             QgsProcessingParameterNumber(
                 self.NUM_PROCESS,
                 self.tr('Set the number of process'),
-                type=QgsProcessingParameterNumber.Integer,
+                type=QgsProcessingParameterNumber.Type.Integer,
                 defaultValue=cpu_count(),
                 optional=True
             )
-        parameter_num_process.setFlags(parameter_num_process.flags() | QgsProcessingParameterDefinition.FlagAdvanced)
+        parameter_num_process.setFlags(parameter_num_process.flags() | QgsProcessingParameterDefinition.Flag.FlagAdvanced)
         self.addParameter(parameter_num_process)
 
         parameter_chunks = \
             QgsProcessingParameterNumber(
                 self.CHUNKS,
                 self.tr('Chunks size for parallel process'),
-                type=QgsProcessingParameterNumber.Integer,
+                type=QgsProcessingParameterNumber.Type.Integer,
                 defaultValue=500,
                 optional=True
             )
-        parameter_chunks.setFlags(parameter_chunks.flags() | QgsProcessingParameterDefinition.FlagAdvanced)
+        parameter_chunks.setFlags(parameter_chunks.flags() | QgsProcessingParameterDefinition.Flag.FlagAdvanced)
         self.addParameter(parameter_chunks)
+
+        self.addParameter(
+            QgsProcessingParameterString(
+                self.PREPROC,
+                self.tr('Preprocessing filter (optional)'),
+                defaultValue='',
+                optional=True
+            )
+        )
 
         self.addParameter(
             QgsProcessingParameterRasterDestination(
@@ -225,11 +236,16 @@ class StackComposedAlgorithm(QgsProcessingAlgorithm):
 
         output_file = self.parameterAsOutputLayer(parameters, self.OUTPUT, context)
 
+        # Parse preprocessing argument (same logic as CLI preproc_validator)
+        preproc_str = self.parameterAsString(parameters, self.PREPROC, context)
+        preproc = self._parse_preproc(preproc_str) if preproc_str else None
+
         stack_composed.run(
             stat=self.STAT_KEYS[self.parameterAsEnum(parameters, self.STAT, context)],
+            preproc=preproc,
             band=self.parameterAsInt(parameters, self.BAND, context),
             nodata=self.parameterAsInt(parameters, self.NODATA_INPUT, context),
-            output= output_file,
+            output=output_file,
             output_type=self.TYPES[self.parameterAsEnum(parameters, self.DATA_TYPE, context)],
             num_process=self.parameterAsInt(parameters, self.NUM_PROCESS, context),
             chunksize=self.parameterAsInt(parameters, self.CHUNKS, context),
@@ -237,3 +253,43 @@ class StackComposedAlgorithm(QgsProcessingAlgorithm):
             feedback=feedback)
 
         return {self.OUTPUT: output_file}
+
+    @staticmethod
+    def _parse_preproc(preproc_str):
+        """Parse a preprocessing expression string into the form expected by ChunkProcessor."""
+        # Plain numeric threshold
+        try:
+            return float(preproc_str)
+        except ValueError:
+            pass
+
+        # Named preprocessors (percentile, std_devs, IQR) are passed through as strings
+        if preproc_str.startswith("percentile_") or preproc_str.endswith("_std_devs") or preproc_str.endswith("_IQR"):
+            return preproc_str
+
+        # Comparison expressions: e.g. '>3', '>=1 and <=5'
+        _CMP_OPS = {"<", "<=", ">", ">=", "==", "!="}
+
+        def _split_condition(s):
+            s = s.strip().replace(" ", "")
+            if not s:
+                raise ValueError
+            if len(s) > 1 and s[1] == "=":
+                op = s[0:2]
+                value = s[2:]
+            else:
+                op = s[0:1]
+                value = s[1:]
+            if op not in _CMP_OPS:
+                raise ValueError
+            return [op, float(value)]
+
+        try:
+            if "and" in preproc_str:
+                return [_split_condition(c) for c in preproc_str.split("and")]
+            return [_split_condition(preproc_str)]
+        except Exception:
+            raise ValueError(
+                f"'{preproc_str}' is not a valid preprocessing expression. "
+                "Examples: '>3', '>=1 and <=5', 'percentile_10_90', '2.5_std_devs', '1.5_IQR'"
+            )

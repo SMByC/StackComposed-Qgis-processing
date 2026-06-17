@@ -7,7 +7,7 @@ about=StackComposed is a Qgis plugin processing that compute the stack composed 
 
 version=23.8
 qgisMinimumVersion=3.0
-qgisMaximumVersion=3.99
+qgisMaximumVersion=4.99
 
 author=Xavier Corredor Llano, SMByC
 email=xavier.corredor.llano@gmail.com

@@ -22,8 +22,18 @@ import datetime
 import os
 
 
+_SENSOR_FROM_CODE = {"E": "ETM", "O": "OLI", "C": "OLI", "T": "TM"}
+
+
 def calc_date(year, jday):
     return (datetime.datetime(year, 1, 1) + datetime.timedelta(jday - 1)).date()
+
+
+def _sensor_from_code(code: str) -> str:
+    try:
+        return _SENSOR_FROM_CODE[code]
+    except KeyError as err:
+        raise ValueError(f"Unknown Landsat sensor code: {code!r}") from err
 
 
 #### LANDSAT PARSE FILENAME ####
@@ -36,14 +46,8 @@ def parse_landsat_ID_oldFilename(file_path):
     Examples:
         LC80070592016320LGN00_band1.tif
     """
-    filename = os.path.basename(file_path).split("_")[0].split(".")[0]
-    filename = filename.upper()
-    if filename[1] == "E":
-        sensor = "ETM"
-    if filename[1] in ["O", "C"]:
-        sensor = "OLI"
-    if filename[1] == "T":
-        sensor = "TM"
+    filename = os.path.basename(file_path).split("_")[0].split(".")[0].upper()
+    sensor = _sensor_from_code(filename[1])
     landsat_version = int(filename[2])
     path = int(filename[3:6])
     row = int(filename[6:9])
@@ -60,21 +64,12 @@ def parse_landsat_ID_newFilename(file_path):
     Examples:
         LC08_L1TP_007059_20161115_20170318_01_T2_b1.tif
     """
-    filename = os.path.basename(file_path).split("_")[0:4]
-    filename = [i.upper() for i in filename]
-    if filename[0][1] == "E":
-        sensor = "ETM"
-    if filename[0][1] in ["O", "C"]:
-        sensor = "OLI"
-    if filename[0][1] == "T":
-        sensor = "TM"
-    landsat_version = int(filename[0][-1])
-    path = int(filename[2][0:3])
-    row = int(filename[2][3:6])
-    year = int(filename[3][0:4])
-    month = int(filename[3][4:6])
-    day = int(filename[3][6:8])
-    date = datetime.date(year, month, day)
+    parts = [p.upper() for p in os.path.basename(file_path).split("_")[0:4]]
+    sensor = _sensor_from_code(parts[0][1])
+    landsat_version = int(parts[0][-1])
+    path = int(parts[2][0:3])
+    row = int(parts[2][3:6])
+    date = datetime.datetime.strptime(parts[3], "%Y%m%d").date()
     jday = date.timetuple().tm_yday
     return landsat_version, sensor, path, row, date, jday
 
@@ -89,13 +84,13 @@ def parse_SMBYC_filename(file_path):
     Examples:
         Landsat_8_53_020601_7ETM_Reflec_SR_Enmask.tif
     """
-    filename = os.path.basename(file_path).split(".")[0]
-    path = int(filename.split("_")[1])
-    row = int(filename.split("_")[2])
-    date = datetime.datetime.strptime(filename.split("_")[3], "%y%m%d").date()
+    parts = os.path.basename(file_path).split(".")[0].split("_")
+    path = int(parts[1])
+    row = int(parts[2])
+    date = datetime.datetime.strptime(parts[3], "%y%m%d").date()
     jday = date.timetuple().tm_yday
-    landsat_version = int(filename.split("_")[4][0])
-    sensor = filename.split("_")[4][1::]
+    landsat_version = int(parts[4][0])
+    sensor = parts[4][1:]
     return landsat_version, sensor, path, row, date, jday
 
 
@@ -103,7 +98,7 @@ def parse_filename(file_path):
     """
     Extract metadata from filename
     """
-    root, filename = os.path.split(file_path)
+    filename = os.path.basename(file_path)
 
     try:
         if filename.startswith("Landsat"):
@@ -116,5 +111,5 @@ def parse_filename(file_path):
             # old filename
             return parse_landsat_ID_oldFilename(file_path)
     except Exception as err:
-        raise Exception("Cannot parse filename for: {}\n\n{}".format(file_path, err))
+        raise Exception(f"Cannot parse filename for: {file_path}\n\n{err}") from err
 

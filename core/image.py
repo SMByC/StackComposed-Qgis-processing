@@ -19,10 +19,39 @@
  ***************************************************************************/
 """
 import os
+import threading
 import numpy as np
 from osgeo import gdal
 
 from StackComposed.core.parse import parse_filename
+
+# ENVI dataset extensions to probe when an ".hdr" path is given.
+_ENVI_DATASET_EXTS = ('.dat', '.raw', '.sli', '.hyspex', '.img')
+
+# Thread-local cache of opened GDAL datasets. Each thread gets its own
+# handles so concurrent reads from dask threads are safe.
+_thread_local = threading.local()
+
+
+def _open_dataset(file_path):
+    if not hasattr(_thread_local, 'cache'):
+        _thread_local.cache = {}
+    ds = _thread_local.cache.get(file_path)
+    if ds is None:
+        ds = gdal.Open(file_path, gdal.GA_ReadOnly)
+        _thread_local.cache[file_path] = ds
+    return ds
+
+
+def reset_dataset_cache():
+    """Drop any cached GDAL handles in the current thread."""
+    if hasattr(_thread_local, 'cache'):
+        for ds in _thread_local.cache.values():
+            try:
+                del ds
+            except Exception:
+                pass
+        _thread_local.cache.clear()
 
 
 class Image:
@@ -40,7 +69,7 @@ class Image:
         self.file_path = self.get_dataset_path(file_path)
         ### set geoproperties ###
         # setting the extent, pixel sizes and projection
-        gdal_file = gdal.Open(self.file_path, gdal.GA_ReadOnly)
+        gdal_file = _open_dataset(self.file_path)
         min_x, x_res, x_skew, max_y, y_skew, y_res = gdal_file.GetGeoTransform()
         max_x = min_x + (gdal_file.RasterXSize * x_res)
         min_y = max_y + (gdal_file.RasterYSize * y_res)
@@ -54,30 +83,48 @@ class Image:
         # projection
         if Image.projection is None:
             Image.projection = gdal_file.GetProjectionRef()
-        del gdal_file
+        # per-band nodata and dtype
+        self.nodata_from_file = {
+            b: gdal_file.GetRasterBand(b).GetNoDataValue()
+            for b in range(1, self.n_bands + 1)
+        }
+        self.data_type = {
+            b: gdal_file.GetRasterBand(b).DataType
+            for b in range(1, self.n_bands + 1)
+        }
         # output type
         self.output_type = None
 
     @staticmethod
     def get_dataset_path(file_path):
         path, ext = os.path.splitext(file_path)
-        if ext.lower() == ".hdr":
-            # search the dataset for ENVI files
-            dataset_exts = ['.dat', '.raw', '.sli', '.hyspex', '.img']
-            for test_ext in [''] + dataset_exts + [i.upper() for i in dataset_exts]:
-                test_dataset_path = path + test_ext
-                if os.path.isfile(test_dataset_path):
-                    return test_dataset_path
-        else:
+        if ext.lower() != ".hdr":
             return file_path
+        # ENVI: probe for a matching dataset alongside the .hdr.
+        # Try the extensionless basename first (common ENVI layout), then known extensions.
+        candidates = [''] + list(_ENVI_DATASET_EXTS) + [e.upper() for e in _ENVI_DATASET_EXTS]
+        for test_ext in candidates:
+            test_dataset_path = path + test_ext
+            if os.path.isfile(test_dataset_path):
+                return test_dataset_path
+        raise FileNotFoundError(
+            f"Could not locate ENVI dataset for header file: {file_path}"
+        )
 
     def set_bounds(self):
+        wrapper_extent = Image.wrapper_extent
+        wrapper_x_res = Image.wrapper_x_res
+        wrapper_y_res = Image.wrapper_y_res
+        wrapper_shape = Image.wrapper_shape
+        if (wrapper_extent is None or wrapper_x_res is None
+                or wrapper_y_res is None or wrapper_shape is None):
+            raise RuntimeError("Image wrapper state is not initialized")
         # bounds for image with respect to wrapper
         # the 0,0 is left-upper corner
-        self.xi_min = round((self.extent[0] - Image.wrapper_extent[0]) / Image.wrapper_x_res)
-        self.xi_max = round(Image.wrapper_shape[1] - (Image.wrapper_extent[2] - self.extent[2]) / Image.wrapper_x_res)
-        self.yi_min = round((Image.wrapper_extent[1] - self.extent[1]) / Image.wrapper_y_res)
-        self.yi_max = round(Image.wrapper_shape[0] - (self.extent[3] - Image.wrapper_extent[3]) / Image.wrapper_y_res)
+        self.xi_min = round((self.extent[0] - wrapper_extent[0]) / wrapper_x_res)
+        self.xi_max = round(wrapper_shape[1] - (wrapper_extent[2] - self.extent[2]) / wrapper_x_res)
+        self.yi_min = round((wrapper_extent[1] - self.extent[1]) / wrapper_y_res)
+        self.yi_max = round(wrapper_shape[0] - (self.extent[3] - wrapper_extent[3]) / wrapper_y_res)
 
     def set_metadata_from_filename(self):
         self.landsat_version, self.sensor, self.path, self.row, self.date, self.jday = parse_filename(self.file_path)
@@ -86,33 +133,18 @@ class Image:
         """
         Get the array of the band for the respective chunk
         """
-        gdal_file = gdal.Open(self.file_path, gdal.GA_ReadOnly)
+        gdal_file = _open_dataset(self.file_path)
         raster_band = gdal_file.GetRasterBand(band).ReadAsArray(xoff, yoff, xsize, ysize)
+        if raster_band is None:
+            return np.full((ysize, xsize), np.nan, dtype=np.float32)
         raster_band = raster_band.astype(np.float32)
 
-        # convert the no data values from file to NaN
-        nodata_from_file = gdal_file.GetRasterBand(band).GetNoDataValue()
-        if nodata_from_file is not None:
-            raster_band[raster_band == nodata_from_file] = np.nan
-
-        # convert the no data values set from arguments to NaN
-        if Image.nodata_from_arg is not None and Image.nodata_from_arg != nodata_from_file:
-            if isinstance(Image.nodata_from_arg, (int, float)):
-                raster_band[raster_band == Image.nodata_from_arg] = np.nan
-            else:
-                for condition in Image.nodata_from_arg:
-                    if condition[0] == "<":
-                        raster_band[raster_band < condition[1]] = np.nan
-                    elif condition[0] == "<=":
-                        raster_band[raster_band <= condition[1]] = np.nan
-                    elif condition[0] == ">":
-                        raster_band[raster_band > condition[1]] = np.nan
-                    elif condition[0] == ">=":
-                        raster_band[raster_band >= condition[1]] = np.nan
-                    elif condition[0] == "==":
-                        raster_band[raster_band == condition[1]] = np.nan
-
-        del gdal_file
+        # convert the no data values from file and arguments to NaN
+        nodata_values = {self.nodata_from_file[band], self.nodata_from_arg}
+        nodata_values.discard(None)
+        if nodata_values:
+            nodata_mask = np.isin(raster_band, list(nodata_values))
+            raster_band[nodata_mask] = np.nan
 
         return raster_band
 
@@ -120,42 +152,48 @@ class Image:
         """
         Get the array of the band adjusted into the wrapper matrix for the respective chunk
         """
-        # bounds for chunk with respect to wrapper
-        # the 0,0 is left-upper corner
-        xc_min = xc
-        xc_max = xc+xc_size
-        yc_min = yc
-        yc_max = yc+yc_size
+        xc_max = xc + xc_size
+        yc_max = yc + yc_size
 
-        # check if the current chunk is outside of the image
-        if xc_min >= self.xi_max or xc_max <= self.xi_min or yc_min >= self.yi_max or yc_max <= self.yi_min:
+        # chunk fully outside the image footprint
+        if xc_max <= self.xi_min or xc >= self.xi_max or yc_max <= self.yi_min or yc >= self.yi_max:
             return None
-        else:
-            # initialize the chunk with a nan matrix
-            chunk_matrix = np.full((yc_size, xc_size), np.nan)
 
-            # set bounds for get the array chunk in image
-            xoff = 0 if xc_min <= self.xi_min else xc_min - self.xi_min
-            xsize = xc_max - self.xi_min if xc_min <= self.xi_min else self.xi_max - xc_min
-            yoff = 0 if yc_min <= self.yi_min else yc_min - self.yi_min
-            ysize = yc_max - self.yi_min if yc_min <= self.yi_min else self.yi_max - yc_min
+        # intersect chunk window with image window in wrapper coords
+        x0 = max(xc, self.xi_min)
+        x1 = min(xc_max, self.xi_max)
+        y0 = max(yc, self.yi_min)
+        y1 = min(yc_max, self.yi_max)
 
-            # adjust to maximum size with respect to chunk or/and image
-            xsize = xc_size if xsize > xc_size else xsize
-            xsize = self.xi_max - self.xi_min if xsize > self.xi_max - self.xi_min else xsize
-            ysize = yc_size if ysize > yc_size else ysize
-            ysize = self.yi_max - self.yi_min if ysize > self.yi_max - self.yi_min else ysize
+        xoff = x0 - self.xi_min
+        yoff = y0 - self.yi_min
+        xsize = x1 - x0
+        ysize = y1 - y0
 
-            # set bounds for fill in chunk matrix
-            x_min = self.xi_min - xc_min if xc_min <= self.xi_min else 0
-            x_max = x_min + xsize if x_min + xsize < xc_max else xc_max
-            y_min = self.yi_min - yc_min if yc_min <= self.yi_min else 0
-            y_max = y_min + ysize if y_min + ysize < yc_max else yc_max
+        x_min = x0 - xc
+        y_min = y0 - yc
 
-            # fill with the chunk data of the image in the corresponding position
-            chunk_matrix[y_min:y_max, x_min:x_max] = self.get_chunk(band, xoff, xsize, yoff, ysize)
+        chunk_matrix = np.full((yc_size, xc_size), np.nan, dtype=np.float32)
+        data_chunk = self.get_chunk(band, xoff, xsize, yoff, ysize)
 
-            return chunk_matrix
+        # Edge case: GDAL may return a slightly smaller/larger array near the
+        # raster boundary; pad with NaN or crop to fit the target slice.
+        target = chunk_matrix[y_min:y_min + ysize, x_min:x_min + xsize]
+        if data_chunk.shape != target.shape:
+            diff_y = target.shape[0] - data_chunk.shape[0]
+            diff_x = target.shape[1] - data_chunk.shape[1]
+            if diff_y > 0 or diff_x > 0:
+                data_chunk = np.pad(
+                    data_chunk,
+                    ((0, max(diff_y, 0)), (0, max(diff_x, 0))),
+                    mode="constant",
+                    constant_values=np.nan,
+                )
+            if diff_y < 0 or diff_x < 0:
+                data_chunk = data_chunk[:target.shape[0], :target.shape[1]]
+
+        chunk_matrix[y_min:y_min + ysize, x_min:x_min + xsize] = data_chunk
+        return chunk_matrix
 
 
 
