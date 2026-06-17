@@ -6,7 +6,7 @@ about=StackComposed is a Qgis plugin processing that compute the stack composed 
     values resulting from the statistic for the specific band for all the valid pixels across the time axis (z-axis)
 
 version=23.8
-qgisMinimumVersion=3.0
+qgisMinimumVersion=3.36
 qgisMaximumVersion=4.99
 
 author=Xavier Corredor Llano, SMByC

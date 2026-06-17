@@ -1,5 +1,0 @@
-<RCC>
-    <qresource prefix="/plugins/StackComposed" >
-        <file>icons/stack_composed.svg</file>
-    </qresource>
-</RCC>

@@ -23,11 +23,12 @@ from multiprocessing import cpu_count
 
 from qgis.PyQt.QtGui import QIcon
 from qgis.PyQt.QtCore import QCoreApplication
-from qgis.core import (QgsProcessing,
+from qgis.core import (Qgis,
                        QgsProcessingAlgorithm,
                        QgsProcessingParameterMultipleLayers,
-                       QgsProcessingParameterRasterDestination, QgsProcessingParameterNumber,
-                       QgsProcessingParameterEnum, QgsProcessingParameterDefinition,
+                       QgsProcessingParameterRasterDestination,
+                       QgsProcessingParameterNumber,
+                       QgsProcessingParameterEnum,
                        QgsProcessingParameterString)
 
 from StackComposed.core import stack_composed
@@ -104,14 +105,14 @@ class StackComposedAlgorithm(QgsProcessingAlgorithm):
         lowercase alphanumeric characters only and no spaces or other
         formatting characters.
         """
-        return 'Assemble and reduce an image stack'
+        return 'assemble_reduce_image_stack'
 
     def displayName(self):
         """
         Returns the translated algorithm name, which should be used for any
         user-visible display of the algorithm name.
         """
-        return self.tr(self.name())
+        return self.tr('Assemble and reduce an image stack')
 
     def group(self):
         """
@@ -131,7 +132,8 @@ class StackComposedAlgorithm(QgsProcessingAlgorithm):
         return None
 
     def icon(self):
-        return QIcon(":/plugins/StackComposed/icons/stack_composed.svg")
+        icon_path = os.path.join(os.path.dirname(__file__), "icons", "stack_composed.svg")
+        return QIcon(icon_path)
 
     def initAlgorithm(self, config=None):
         """
@@ -143,7 +145,7 @@ class StackComposedAlgorithm(QgsProcessingAlgorithm):
             QgsProcessingParameterMultipleLayers(
                 self.INPUTS,
                 self.tr('All input raster files to process'),
-                QgsProcessing.SourceType.TypeRaster,
+                Qgis.ProcessingSourceType.Raster,
             )
         parameter_input.setMinimumNumberInputs(2)
         self.addParameter(parameter_input)
@@ -161,7 +163,7 @@ class StackComposedAlgorithm(QgsProcessingAlgorithm):
             QgsProcessingParameterNumber(
                 self.BAND,
                 self.tr('Set the band number to process'),
-                type=QgsProcessingParameterNumber.Type.Integer,
+                type=Qgis.ProcessingNumberParameterType.Integer,
                 minValue=1,
                 defaultValue=1,
                 optional=False
@@ -172,7 +174,7 @@ class StackComposedAlgorithm(QgsProcessingAlgorithm):
             QgsProcessingParameterNumber(
                 self.NODATA_INPUT,
                 self.tr('Input pixel value to treat as "nodata"'),
-                type=QgsProcessingParameterNumber.Type.Integer,
+                type=Qgis.ProcessingNumberParameterType.Integer,
                 defaultValue=None,
                 optional=True
             )
@@ -192,22 +194,22 @@ class StackComposedAlgorithm(QgsProcessingAlgorithm):
             QgsProcessingParameterNumber(
                 self.NUM_PROCESS,
                 self.tr('Set the number of process'),
-                type=QgsProcessingParameterNumber.Type.Integer,
+                type=Qgis.ProcessingNumberParameterType.Integer,
                 defaultValue=cpu_count(),
                 optional=True
             )
-        parameter_num_process.setFlags(parameter_num_process.flags() | QgsProcessingParameterDefinition.Flag.FlagAdvanced)
+        parameter_num_process.setFlags(parameter_num_process.flags() | Qgis.ProcessingParameterFlag.Advanced)
         self.addParameter(parameter_num_process)
 
         parameter_chunks = \
             QgsProcessingParameterNumber(
                 self.CHUNKS,
                 self.tr('Chunks size for parallel process'),
-                type=QgsProcessingParameterNumber.Type.Integer,
+                type=Qgis.ProcessingNumberParameterType.Integer,
                 defaultValue=500,
                 optional=True
             )
-        parameter_chunks.setFlags(parameter_chunks.flags() | QgsProcessingParameterDefinition.Flag.FlagAdvanced)
+        parameter_chunks.setFlags(parameter_chunks.flags() | Qgis.ProcessingParameterFlag.Advanced)
         self.addParameter(parameter_chunks)
 
         self.addParameter(
