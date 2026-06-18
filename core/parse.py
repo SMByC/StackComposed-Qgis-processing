@@ -5,7 +5,7 @@
                           A QGIS plugin processing
  Compute and generate the composed of a raster images stack
                               -------------------
-        copyright            : (C) 2021-2022 by Xavier Corredor Llano, SMByC
+        copyright            : (C) 2021-2026 by Xavier Corredor Llano, SMByC
         email                : xavier.corredor.llano@gmail.com
  ***************************************************************************/
 
@@ -112,4 +112,3 @@ def parse_filename(file_path):
             return parse_landsat_ID_oldFilename(file_path)
     except Exception as err:
         raise Exception(f"Cannot parse filename for: {file_path}\n\n{err}") from err
-

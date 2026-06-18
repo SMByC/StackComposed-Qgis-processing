@@ -44,19 +44,13 @@ StackComposed processes chunks in parallel using threaded Dask workers. The main
 
 ## Installation
 
-The plugin is installed through the QGIS Plugin Manager. It bundles its own copies of Dask and supporting libraries, so no external Python dependencies are required beyond a standard QGIS 3.36+ installation.
+The plugin is installed through the QGIS Plugin Manager. It bundles its own copies of Dask and supporting libraries, so no external Python dependencies are required beyond a standard QGIS 3.36+ and 4.x installation.
 
 ### From the QGIS Plugin Manager
 
 1. In QGIS, open **Plugins → Manage and Install Plugins**.
 2. Search for **Stack Composed**.
 3. Click **Install Plugin**.
-
-### From a ZIP file
-
-1. Download the plugin ZIP.
-2. In QGIS, open **Plugins → Manage and Install Plugins → Install from ZIP**.
-3. Select the ZIP file and install.
 
 After installation, the algorithm appears in the Processing Toolbox under **Stack Composed → Assemble and reduce an image stack**.
 
@@ -72,30 +66,6 @@ All input rasters must:
 At least two images are required.
 
 Inputs are selected as loaded raster layers in the QGIS project. The plugin accepts any raster format that QGIS can read through GDAL; the most common are `.tif`, `.img`, and `.hdr` (ENVI datasets).
-
-## Using the algorithm
-
-Open the Processing Toolbox, find **Stack Composed → Assemble and reduce an image stack**, and double-click to open the dialog. Configure the parameters and click **Run**.
-
-The algorithm can also be used inside QGIS Processing models, called from the Python console, or executed in batch mode — like any other QGIS Processing algorithm.
-
-## Parameters
-
-| Parameter | Required | Default | Description |
-|-----------|----------|---------|-------------|
-| **Input rasters** | yes | - | Two or more raster layers loaded in the QGIS project. |
-| **Statistic** | yes | Median | Statistic to compute. See [Statistics](#statistics). |
-| **Band** | yes | `1` | Band number to process. Only one band per run. |
-| **Nodata value** | no | file nodata | Input pixel value to treat as nodata. Overrides file metadata. Integer only. |
-| **Output data type** | no | Default | Force output dtype or let StackComposed choose. See [Automatic output data types](#automatic-output-data-types). |
-| **Number of processes** | no | CPU count | Number of parallel worker threads. Advanced parameter. |
-| **Chunks size** | no | `500` | Chunk size in pixels. Larger chunks reduce overhead but use more memory. Advanced parameter. |
-| **Preprocessing filter** | no | none | Filter applied to each pixel's stack of values before the statistic. See [Preprocessing](#preprocessing). |
-| **Output raster** | yes | - | Destination for the result GeoTIFF, chosen through the QGIS output selector. |
-
-## Output
-
-The result is a single-band GeoTIFF covering the wrapper extent, with the same projection as the inputs and the pixel values set by the chosen statistic. The output file path is selected through the standard QGIS raster destination picker (temporary file, file on disk, or saved to a layer in the project).
 
 ## Statistics
 

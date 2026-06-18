@@ -3,7 +3,7 @@
 #
 #  Compute and generate the composed of a raster images stack
 #							 -------------------
-#		copyright			: (C) 2019 by Xavier Corredor Llano, SMByC
+#		copyright			: (C) 2026 by Xavier Corredor Llano, SMByC
 #		email				: xcorredorl@ideam.gov.co
 # ***************************************************************************/
 #

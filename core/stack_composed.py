@@ -5,7 +5,7 @@
                           A QGIS plugin processing
  Compute and generate the composed of a raster images stack
                               -------------------
-        copyright            : (C) 2021-2022 by Xavier Corredor Llano, SMByC
+        copyright            : (C) 2021-2026 by Xavier Corredor Llano, SMByC
         email                : xavier.corredor.llano@gmail.com
  ***************************************************************************/
 
@@ -191,6 +191,3 @@ def run(stat, preproc, band, nodata, output, output_type, num_process, chunksize
     # clean
     del driver, outRaster, outband, outRasterSRS, output_array
     reset_dataset_cache()
-
-
-
