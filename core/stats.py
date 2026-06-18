@@ -41,15 +41,12 @@ _CMP_OPS = {
 def _build_stat_func(stat):
     """Return a vectorized ``(stack_chunk, metadata) -> 2D array`` function for ``stat``."""
 
-    # Extract: keep only voxels equal to v, then per-pixel mean (NaN where empty).
+    # Extract: output v where any observation equals v, otherwise NaN.
     if stat.startswith("extract_"):
         v = int(stat.split("_")[1])
 
         def extract_stat(stack_chunk, metadata):
-            masked = np.where(stack_chunk == v, stack_chunk, np.nan)
-            with warnings.catch_warnings():
-                warnings.simplefilter("ignore", category=RuntimeWarning)
-                return np.nanmean(masked, axis=2)
+            return np.where(np.any(stack_chunk == v, axis=2), v, np.nan)
         return extract_stat
 
     if stat == "median":
@@ -272,14 +269,6 @@ class ChunkProcessor:
 
         if arg is None:
             return lambda chunks: chunks
-
-        if isinstance(arg, (int, float)):
-            threshold = float(arg)
-
-            def preproc_function(chunks):
-                return np.where(chunks > threshold, chunks, np.nan)
-
-            return preproc_function
 
         if isinstance(arg, list):
             # Each item is [operator_str, threshold].

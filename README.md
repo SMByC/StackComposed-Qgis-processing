@@ -1,115 +1,216 @@
-# StackComposed
+<p align="center">
+  <img src="icons/stack_composed.svg" alt="StackComposed icon" width="96" height="96">
+</p>
+<h1 align="center">StackComposed — QGIS Processing plugin</h1>
 
-StackComposed is a Qgis plugin processing that compute the stack composed (assemble and reduce) using a statistic to get the final value. The input stack layers is, for example a time series of georeferenced data (such as Landsat images) and they can be different scenes or have different extents to generate a mosaic. The result is an assembled image, with a  wrapper extent for all input data, with the pixel values resulting from the statistic for the specific band for all the valid pixels across the time axis (z-axis), in a parallel process.
+StackComposed computes a per-pixel statistic over a stack of georeferenced raster images, such as a Landsat time series. Input images can cover different scenes, tiles, or partially overlapping areas. StackComposed builds one wrapper extent that covers all inputs, reads each processing chunk from every image, masks nodata values as `NaN`, and writes the selected statistic to a GeoTIFF.
 
-The main aim of this app are:
+This is the QGIS Processing plugin version. It exposes the same core computation as the [standalone CLI version](https://github.com/SMByC/StackComposed) through a Processing algorithm, so it integrates with QGIS models, scripts, and batch processing.
 
-- Improve the velocity of compute the stack composed
-- Compute several statistics in the stack composed easily.
-- Compute a stack composed for data in different position/scenes using a wrapper extent.
-- Include the overlapping areas for compute the statistics, e.g. two adjacent scenes with overlapping areas.
-- Compute some statistics  that depends of time data order (such as last valid pixel, pearson correlation) using the filename for parse metadata (for now only for Landsat images)
+Typical uses include computing median reflectance, counting valid observations, extracting the most recent valid pixel, returning the Julian day of a temporal statistic, or estimating a per-pixel linear trend from dated Landsat scenes.
 
-## Process flow
+## Core idea
 
-The general process flow is:
+For each output pixel, StackComposed builds a stack of values from all input images that overlap that pixel. The statistic is computed along the Z-axis only from valid values. Pixels outside an image footprint are treated as missing values.
 
-- Read all input data (but not load the raster in memory)
-- Calculate the wrapper extent for all input data
-- Position each data in the wrapper extent (the app does not exactly do this, use a location for extract the chunk in the right position in wrapper, this is only for understand the process)
-- Make the calculation of the statistic in parallel process by chunks
-- Save result with the same projection with the wrapper extent
+The workflow is:
 
+1. Read all input raster layers loaded in the QGIS project (the rasters are not loaded into memory at once).
+2. Validate that all inputs share projection, pixel size, and pixel registration.
+3. Build the wrapper extent that covers all images.
+4. Split the wrapper into chunks.
+5. Read only the current chunk from every input image.
+6. Apply the optional preprocessing filter.
+7. Compute the statistic along the Z-axis.
+8. Stream chunk results to the output GeoTIFF.
 
-### Compute the wrapper extent
+### Wrapper extent
 
-The wrapper extent is the minimum extent that cover all input images, in this example there are 3 scenes of the images with different position, the wrapper extent is shown in dotted line:
+The wrapper extent is the minimum bounding extent that covers all input images. Output dimensions are derived from this extent and the input pixel size.
 
-![](docs/img/wrapper_extent.png)
+<img src="img/wrapper_extent.png" height="150px" style="margin: auto;display: block;">
 
-The wrapper extent is the size for the result.
+### Data cube by chunk
 
-### Data cube process
+For each chunk, StackComposed reads the corresponding window from every image and arranges the values as a small data cube: rows, columns, and depth (Z-axis). The statistic is computed along the Z-axis for every pixel in that chunk.
 
-With the wrapper extent then the images are located in a right position in it and put all images in a stack for process, the images are ordered across the time like a cube or a 3D matrix. When compute a statistic, it processes all pixel for the wrapper extent, first extract all pixel values in all images in their corresponding position across the z-axis, for some images this position don't have data, then it returns a NaN value that is not included for the statistic.
+<img src="img/process.png" height="400px" style="margin: auto;display: block;">
 
-![](docs/img/process.png)
+### Parallel processing
 
-### Parallelization
+StackComposed processes chunks in parallel using threaded Dask workers. The main thread is the only writer, which avoids concurrent writes to the output file. The **Number of processes** parameter controls how many worker threads are used; the default is the CPU count of the machine. The **Chunks size** parameter controls how much raster data each worker loads at once.
 
-There are mainly two problems for serial process (no parallel):
+<img src="img/chunks.png" height="150px" style="margin: auto;display: block;">
 
-- When are several images (million of pixels) required a lot of time for the process
-- For load several images (data cube) for process required a lot of ram memory for do it
+## Installation
 
-For solved it, the StackComposed divide the data cube in equal chunks, each chunk are processes in parallel depends of the number of process assigned. When one chunk is being process, it loads only the chunk part for all images and not load the entire image for do it, with this the StackComposed only required a ram memory enough only for the sizes and the number of chunks that are currently being processed in parallel.
+The plugin is installed through the QGIS Plugin Manager. It bundles its own copies of Dask and supporting libraries, so no external Python dependencies are required beyond a standard QGIS 3.36+ installation.
 
-![](docs/img/chunks.png)
+### From the QGIS Plugin Manager
 
-### Recommendation for input data
+1. In QGIS, open **Plugins → Manage and Install Plugins**.
+2. Search for **Stack Composed**.
+3. Click **Install Plugin**.
 
-There are some recommendation for input data for process it, all input images need:
+### From a ZIP file
 
-- To be in the same projection
-- Have the same pixel size
-- Have pixel registration
+1. Download the plugin ZIP.
+2. In QGIS, open **Plugins → Manage and Install Plugins → Install from ZIP**.
+3. Select the ZIP file and install.
 
-For the moment, the image formats support are: `tif`, `img` and `ENVI` (hdr)
+After installation, the algorithm appears in the Processing Toolbox under **Stack Composed → Assemble and reduce an image stack**.
 
-### Statistics
+## Input requirements
 
-Statistics for compute the composed along the "time" axis ignoring any nans, this is, compute the statistic along the time series by pixel.
-- `median`: compute the median
-- `mean`: compute the arithmetic mean
-- `gmean`: compute the geometric mean, that is the n-th root of (x1 * x2 * ... * xn)
-- `max`: compute the maximum value
-- `min`: compute the minimum value
-- `std`: compute the standard deviation
-- `valid_pixels`: compute the count of valid pixels
-- `last_pixel`: return the last _valid_ pixel base on the date of the raster image, required filename as metadata [(extra metadata)](#filename-as-metadata)
-- `jday_last_pixel`: return the julian day of the _last valid pixel_ base on the date of the raster image, required filename as metadata [(extra metadata)](#filename-as-metadata)
-- `jday_median`: return the julian day of the median value base on the date of the raster image, required filename as metadata [(extra metadata)](#filename-as-metadata)
-- `trim_mean_LL_UL`: compute the truncated mean, first clean the time pixels series below to percentile LL (lower limit) and above the percentile UL (upper limit) then compute the mean, e.g. trim_mean_25_80. This statistic is not good for few time series data
-- `linear_trend`: compute the linear trend (slope of the line) using least-squares method of the valid pixels time series ordered by the date of images. The output by default is multiply by 1000 in signed integer. required filename as metadata [(extra metadata)](#filename-as-metadata)
+All input rasters must:
 
-#### Chunks sizes
+- use the same projection
+- use the same pixel size
+- be aligned to the same pixel grid
+- have at least the requested band number
 
-Choosing good values for chunks can strongly impact performance. StackComposed only required a ram memory enough only for the sizes and the number of chunks that are currently being processed in parallel, therefore the chunks sizes going together with the number of process. Here are some general guidelines. The strongest guide is memory:
+At least two images are required.
 
-- The size of your blocks should fit in memory.
+Inputs are selected as loaded raster layers in the QGIS project. The plugin accepts any raster format that QGIS can read through GDAL; the most common are `.tif`, `.img`, and `.hdr` (ENVI datasets).
 
-- Actually, several blocks should fit in memory at once, assuming you want multi-core
+## Using the algorithm
 
-- The size of the blocks should be large enough to hide scheduling overhead, which is a couple of milliseconds per task
+Open the Processing Toolbox, find **Stack Composed → Assemble and reduce an image stack**, and double-click to open the dialog. Configure the parameters and click **Run**.
 
-#### Filename as metadata
+The algorithm can also be used inside QGIS Processing models, called from the Python console, or executed in batch mode — like any other QGIS Processing algorithm.
 
-Some statistics or arguments required extra information for each image to process. The StackComposed acquires this extra metadata using parsing of the filename. Currently support two format:
+## Parameters
 
-- **Official Landsat filenames:**
-    - Example:
-        - LE70080532002152EDC00...tif
-        - LC08_L1TP_007059_20161115...tif
+| Parameter | Required | Default | Description |
+|-----------|----------|---------|-------------|
+| **Input rasters** | yes | - | Two or more raster layers loaded in the QGIS project. |
+| **Statistic** | yes | Median | Statistic to compute. See [Statistics](#statistics). |
+| **Band** | yes | `1` | Band number to process. Only one band per run. |
+| **Nodata value** | no | file nodata | Input pixel value to treat as nodata. Overrides file metadata. Integer only. |
+| **Output data type** | no | Default | Force output dtype or let StackComposed choose. See [Automatic output data types](#automatic-output-data-types). |
+| **Number of processes** | no | CPU count | Number of parallel worker threads. Advanced parameter. |
+| **Chunks size** | no | `500` | Chunk size in pixels. Larger chunks reduce overhead but use more memory. Advanced parameter. |
+| **Preprocessing filter** | no | none | Filter applied to each pixel's stack of values before the statistic. See [Preprocessing](#preprocessing). |
+| **Output raster** | yes | - | Destination for the result GeoTIFF, chosen through the QGIS output selector. |
 
+## Output
 
-- **SMByC format:**
-    - Example:
-        - Landsat_8_53_020601_7ETM...tif
+The result is a single-band GeoTIFF covering the wrapper extent, with the same projection as the inputs and the pixel values set by the chosen statistic. The output file path is selected through the standard QGIS raster destination picker (temporary file, file on disk, or saved to a layer in the project).
 
-For them extract: landsat version, sensor, path, row, date and julian day.
+## Statistics
 
-## About us
+| Statistic | Output meaning | Notes |
+|-----------|----------------|-------|
+| Median | Median of valid values | Ignores nodata/NaN. |
+| Arithmetic mean | Arithmetic mean | Ignores nodata/NaN. |
+| Geometric mean | Geometric mean | Uses positive values only. |
+| Maximum value | Maximum valid value | Ignores nodata/NaN. |
+| Minimum value | Minimum valid value | Ignores nodata/NaN. |
+| Sum | Sum of valid values | Returns nodata/NaN when all observations are invalid. |
+| Standard deviation | Standard deviation | Ignores nodata/NaN. |
+| Number of valid pixels | Count of valid observations | Output dtype is `Byte` when fewer than 256 images, otherwise `UInt16`. |
+| Last valid pixel | Pixel value from the most recent valid dated image | Requires [filename metadata](#filename-metadata). |
+| Julian day of the last valid pixel | Julian day of the most recent valid dated image | Requires [filename metadata](#filename-metadata). |
+| Julian day of the median value | Julian day of the temporal median position | Requires [filename metadata](#filename-metadata). |
+| Linear trend | Ordinary least squares slope multiplied by 1e6 | Requires [filename metadata](#filename-metadata). Default output dtype is `Int32`. |
 
-StackComposed was developing, designed and implemented by the Group of Forest and Carbon Monitoring System (SMByC), operated by the Institute of Hydrology, Meteorology and Environmental Studies (IDEAM) - Colombia.
+`Julian day of the last valid pixel` and `Julian day of the median value` write `0` where a pixel has no valid dated observation.
 
-Author and developer: *Xavier Corredor Ll.*  
-Theoretical support, tester and product verification: SMByC-PDI group
+### Automatic output data types
 
-### Contact
+When **Output data type** is set to **Default**, StackComposed selects an output data type from the statistic and inputs:
 
-Xavier Corredor Ll.: *xcorredorl (a) ideam.gov.co*  
-SMByC: *smbyc (a) ideam.gov.co*
+| Statistic group | Default dtype |
+|-----------------|---------------|
+| `Maximum value`, `Minimum value`, `Last valid pixel` | Input dtype |
+| `Sum` | `Float64` if the input is `Float64`, otherwise `Float32` (avoids integer overflow) |
+| `Julian day of the last valid pixel`, `Julian day of the median value` | `UInt16` |
+| `Median`, `Arithmetic mean`, `Geometric mean`, `Standard deviation` | `Float64` if the input is `Float64`, otherwise `Float32` |
+| `Number of valid pixels` | `Byte` for fewer than 256 images, otherwise `UInt16` |
+| `Linear trend` | `Int32` |
+
+The available explicit output data types are: `Default`, `Byte`, `UInt16`, `Int16`, `UInt32`, `Int32`, `Float32`, `Float64`.
+
+## Preprocessing
+
+Preprocessing is applied to each pixel's stack of values before the statistic. Values that fail the preprocessing condition become nodata/NaN for the statistic.
+
+Enter the expression as a string in the **Preprocessing filter** parameter.
+
+| Expression | Meaning | Example |
+|------------|---------|---------|
+| `>N`, `>=N`, `<N`, `<=N`, `==N`, `!=N` | Keep values matching a comparison | `>0` |
+| `>A and <B` | Keep values matching both comparisons | `>=1 and <=5` |
+| `percentile_LL_UL` | Keep values between per-pixel percentile bounds | `percentile_10_90` |
+| `NN_std_devs` | Keep values within `NN` standard deviations of the per-pixel mean | `2.5_std_devs` |
+| `NN_IQR` | Keep values within `NN` interquartile ranges of the per-pixel median | `1.5_IQR` |
+
+Only `and` is supported for compound comparison expressions.
+
+Practical preprocessing examples:
+
+- Mask invalid reflectance values before computing a mean or median, for example `>0 and <=10000` for scaled optical reflectance products.
+- Remove outliers along the stack before a summary statistic, for example `percentile_10_90` to keep the central 80% of each pixel's stack of values.
+- Keep values near the local distribution along the stack before trend estimation, for example `2.5_std_devs` to reduce the effect of extreme cloud, shadow, or sensor artifacts.
+
+## Chunk size and number of processes
+
+The chunk size controls how much raster data each worker loads at once. For one chunk, memory is roughly proportional to:
+
+```text
+chunk_rows * chunk_cols * number_of_overlapping_images
+```
+
+General guidance:
+
+- Increase **Chunks size** when processing overhead dominates and memory is available.
+- Decrease **Chunks size** when memory pressure is high.
+- Increase **Number of processes** only when enough memory exists for several chunks at once.
+- Set **Number of processes** to `1` for debugging or for machines with limited memory.
+
+The chunk size is clamped to the wrapper dimensions when the requested chunk is larger than the output raster.
+
+## Filename metadata
+
+The following statistics require date metadata parsed from filenames:
+
+- Last valid pixel
+- Julian day of the last valid pixel
+- Julian day of the median value
+- Linear trend
+
+Supported Landsat filename styles include:
+
+### Old Landsat IDs
+
+```text
+LC80070592016320LGN00_band1.tif
+LE70070592003123LGN00_band1.tif
+```
+
+### New Landsat product IDs
+
+```text
+LC08_L1TP_007059_20161115_20170318_01_T2_b1.tif
+LE07_L1TP_007059_20030503_20160928_01_T1_b1.tif
+```
+
+### SMByC Landsat filenames
+
+```text
+Landsat_8_53_020601_7ETM_Reflec_SR_Enmask.tif
+Landsat_8_53_020823_7ETM_Reflec_SR_Enmask.tif
+```
+
+StackComposed extracts Landsat version, sensor, path, row, acquisition date, and Julian day from these patterns.
+
+## About
+
+StackComposed was designed and developed by the Forest and Carbon Monitoring System group (SMByC), operated by the Institute of Hydrology, Meteorology and Environmental Studies (IDEAM) — Colombia.
+
+**Author and developer:** Xavier C. Llano <xavier.corredor.llano@gmail.com>  
+**Theoretical support, testing and product verification:** SMByC-PDI group
 
 ## License
 
-StackComposed is a free/libre software and is licensed under the GNU General Public License.
+StackComposed is free/libre software, licensed under the GNU General Public License v3 (GPLv3).

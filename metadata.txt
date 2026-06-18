@@ -1,9 +1,10 @@
 [general]
 name=Stack Composed
-description=Compute and generate in a parallel process the composed of a raster images stack through assemble and reduce by a statistic
-about=StackComposed is a Qgis plugin processing that compute the stack composed (assemble and reduce) using a statistic
-    to get the final value. The result is an assembled image, with a  wrapper extent for all input data, with the pixel
-    values resulting from the statistic for the specific band for all the valid pixels across the time axis (z-axis)
+description=Compute a per-pixel statistic over a stack of georeferenced raster images, building a wrapper extent that covers all inputs and writing the result to a GeoTIFF
+about=StackComposed computes a per-pixel statistic over a stack of georeferenced raster images, such as a Landsat time series.
+    Input images can cover different scenes, tiles, or partially overlapping areas. It builds one wrapper extent that
+    covers all inputs, reads each processing chunk from every image, masks nodata values as NaN, and writes the selected
+    statistic to a GeoTIFF.
 
 version=23.8
 qgisMinimumVersion=3.36

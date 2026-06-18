@@ -78,20 +78,80 @@ class StackComposedAlgorithm(QgsProcessingAlgorithm):
         should provide a basic description about what the algorithm does and the
         parameters and outputs associated with it.
         """
-        html_help = '''
-        <p>StackComposed is a Qgis plugin processing that compute the stack composed (assemble and reduce) using a \
-        statistic to get the final value. The input stack layers is, for example a time series of georeferenced data \
-        (such as Landsat images) and they can be different scenes or have different extents to generate a mosaic. \
-        The result is an assembled image, with a  wrapper extent for all input data, with the pixel values resulting \
-        from the statistic for the specific band for all the valid pixels across the time axis (z-axis), in a parallel \
-        process.</p>
-        <h3 id="recommendation-for-data-input">Recommendation for input data</h3>
-        <p>There are some recommendation for input data for process it, all input images need:</p>
-        - To be in the same projection
-        - Have the same pixel size
-        - Have pixel registration
-        <p>For the moment, the image formats support are: <code>tif</code>, <code>img</code> and <code>ENVI</code> (hdr)</p>
-        '''
+        html_help = (
+            "<p>StackComposed computes a per-pixel statistic over a stack of "
+            "georeferenced raster images, such as a Landsat time series. Input "
+            "images can cover different scenes, tiles, or partially overlapping "
+            "areas. It builds one wrapper extent that covers all inputs, reads "
+            "each processing chunk from every image, masks nodata values as "
+            "<code>NaN</code>, and writes the selected statistic to a GeoTIFF.</p>"
+
+            "<p><b>Input requirements</b><br>"
+            "All input rasters must:<br>"
+            "&bull; use the same projection<br>"
+            "&bull; use the same pixel size<br>"
+            "&bull; be aligned to the same pixel grid<br>"
+            "&bull; have at least the requested band number<br><br>"
+            "At least two images are required. Inputs are loaded raster layers "
+            "in the QGIS project; any format that QGIS can read through GDAL is "
+            "accepted (most commonly <code>.tif</code>, <code>.img</code>, and "
+            "<code>.hdr</code> for ENVI datasets).</p>"
+
+            "<p><b>Important: mask your input nodata</b><br>"
+            "StackComposed relies on nodata metadata to distinguish valid pixels "
+            "from missing observations along the Z-axis. If your rasters do not "
+            "declare a nodata value, set it explicitly with the <b>Nodata value</b> "
+            "parameter &mdash; otherwise pixels that should be ignored (background, "
+            "fill, or out-of-scene areas) will enter the statistic as real values "
+            "and skew the result. Always confirm that each input "
+            "either has a correct nodata value in its metadata or supplies one "
+            "through this parameter before running the statistic.</p>"
+
+            "<p><b>Statistics</b> (computed along the Z-axis, ignoring nodata/NaN)<br>"
+            "&bull; <b>Median</b> &mdash; median of valid values<br>"
+            "&bull; <b>Arithmetic mean</b> &mdash; arithmetic mean of valid values<br>"
+            "&bull; <b>Geometric mean</b> &mdash; geometric mean, uses positive values only<br>"
+            "&bull; <b>Maximum value</b> &mdash; maximum valid value<br>"
+            "&bull; <b>Minimum value</b> &mdash; minimum valid value<br>"
+            "&bull; <b>Sum</b> &mdash; sum of valid values<br>"
+            "&bull; <b>Standard deviation</b> &mdash; standard deviation of valid values<br>"
+            "&bull; <b>Number of valid pixels</b> &mdash; count of valid observations<br>"
+            "&bull; <b>Last valid pixel</b> &mdash; pixel value from the most recent valid "
+            "dated image (requires filename metadata)<br>"
+            "&bull; <b>Julian day of the last valid pixel</b> &mdash; Julian day of the most "
+            "recent valid dated image (requires filename metadata)<br>"
+            "&bull; <b>Julian day of the median value</b> &mdash; Julian day of the temporal "
+            "median position (requires filename metadata)<br>"
+            "&bull; <b>Linear trend</b> &mdash; ordinary least squares slope multiplied by "
+            "1e6 (requires filename metadata)</p>"
+
+            "<p><b>Preprocessing filter</b> (optional, applied to each pixel's stack "
+            "of values before the statistic; values that fail the condition become "
+            "nodata/NaN)<br>"
+            "&bull; <code>&gt;N</code>, <code>&gt;=N</code>, <code>&lt;N</code>, "
+            "<code>&lt;=N</code>, <code>==N</code>, <code>!=N</code> &mdash; keep values "
+            "matching a comparison<br>"
+            "&bull; <code>&gt;A and &lt;B</code> &mdash; keep values matching both "
+            "comparisons (only <code>and</code> is supported)<br>"
+            "&bull; <code>percentile_LL_UL</code> &mdash; keep values between per-pixel "
+            "percentile bounds (e.g. <code>percentile_10_90</code>)<br>"
+            "&bull; <code>NN_std_devs</code> &mdash; keep values within <code>NN</code> "
+            "standard deviations of the per-pixel mean (e.g. <code>2.5_std_devs</code>)<br>"
+            "&bull; <code>NN_IQR</code> &mdash; keep values within <code>NN</code> "
+            "interquartile ranges of the per-pixel median (e.g. <code>1.5_IQR</code>)</p>"
+
+            "<p><b>Filename metadata</b><br>"
+            "The date-dependent statistics (Last valid pixel, Julian day of the last "
+            "valid pixel, Julian day of the median value, Linear trend) require date "
+            "metadata parsed from the filename. Supported Landsat filename styles:<br>"
+            "&bull; Old Landsat IDs: <code>LC80070592016320LGN00_band1.tif</code><br>"
+            "&bull; New Landsat product IDs: "
+            "<code>LC08_L1TP_007059_20161115_20170318_01_T2_b1.tif</code><br>"
+            "&bull; SMByC format: <code>Landsat_8_53_020601_7ETM_Reflec_SR_Enmask.tif</code></p>"
+
+            "<p>See the plugin README for full documentation on output data types, "
+            "chunk sizing, and examples.</p>"
+        )
         return html_help
 
     def createInstance(self):
@@ -144,7 +204,7 @@ class StackComposedAlgorithm(QgsProcessingAlgorithm):
         parameter_input = \
             QgsProcessingParameterMultipleLayers(
                 self.INPUTS,
-                self.tr('All input raster files to process'),
+                self.tr('Input raster layers to process (two or more)'),
                 Qgis.ProcessingSourceType.Raster,
             )
         parameter_input.setMinimumNumberInputs(2)
@@ -153,7 +213,7 @@ class StackComposedAlgorithm(QgsProcessingAlgorithm):
         self.addParameter(
             QgsProcessingParameterEnum(
                 self.STAT,
-                self.tr('Statistic for compute the composed'),
+                self.tr('Statistic to compute along the Z-axis'),
                 self.STAT_DESC,
                 allowMultiple=False,
             )
@@ -162,7 +222,7 @@ class StackComposedAlgorithm(QgsProcessingAlgorithm):
         self.addParameter(
             QgsProcessingParameterNumber(
                 self.BAND,
-                self.tr('Set the band number to process'),
+                self.tr('Band number to process'),
                 type=Qgis.ProcessingNumberParameterType.Integer,
                 minValue=1,
                 defaultValue=1,
@@ -173,7 +233,7 @@ class StackComposedAlgorithm(QgsProcessingAlgorithm):
         self.addParameter(
             QgsProcessingParameterNumber(
                 self.NODATA_INPUT,
-                self.tr('Input pixel value to treat as "nodata"'),
+                self.tr('Input pixel value to treat as nodata (overrides file metadata)'),
                 type=Qgis.ProcessingNumberParameterType.Integer,
                 defaultValue=None,
                 optional=True
@@ -183,7 +243,7 @@ class StackComposedAlgorithm(QgsProcessingAlgorithm):
         self.addParameter(
             QgsProcessingParameterEnum(
                 self.DATA_TYPE,
-                self.tr('Output data type'),
+                self.tr('Output data type (Default selects automatically based on the statistic)'),
                 self.TYPES,
                 allowMultiple=False,
                 defaultValue='Default',
@@ -193,7 +253,7 @@ class StackComposedAlgorithm(QgsProcessingAlgorithm):
         parameter_num_process = \
             QgsProcessingParameterNumber(
                 self.NUM_PROCESS,
-                self.tr('Set the number of process'),
+                self.tr('Number of parallel worker threads'),
                 type=Qgis.ProcessingNumberParameterType.Integer,
                 defaultValue=cpu_count(),
                 optional=True
@@ -204,7 +264,7 @@ class StackComposedAlgorithm(QgsProcessingAlgorithm):
         parameter_chunks = \
             QgsProcessingParameterNumber(
                 self.CHUNKS,
-                self.tr('Chunks size for parallel process'),
+                self.tr('Chunk size in pixels (larger chunks reduce overhead but use more memory)'),
                 type=Qgis.ProcessingNumberParameterType.Integer,
                 defaultValue=500,
                 optional=True
@@ -215,7 +275,7 @@ class StackComposedAlgorithm(QgsProcessingAlgorithm):
         self.addParameter(
             QgsProcessingParameterString(
                 self.PREPROC,
-                self.tr('Preprocessing filter (optional)'),
+                self.tr('Preprocessing filter expression (optional)'),
                 defaultValue='',
                 optional=True
             )
@@ -224,7 +284,7 @@ class StackComposedAlgorithm(QgsProcessingAlgorithm):
         self.addParameter(
             QgsProcessingParameterRasterDestination(
                 self.OUTPUT,
-                self.tr('Output raster stack composed')
+                self.tr('Output raster (GeoTIFF)')
             )
         )
 
@@ -259,12 +319,6 @@ class StackComposedAlgorithm(QgsProcessingAlgorithm):
     @staticmethod
     def _parse_preproc(preproc_str):
         """Parse a preprocessing expression string into the form expected by ChunkProcessor."""
-        # Plain numeric threshold
-        try:
-            return float(preproc_str)
-        except ValueError:
-            pass
-
         # Named preprocessors (percentile, std_devs, IQR) are passed through as strings
         if preproc_str.startswith("percentile_") or preproc_str.endswith("_std_devs") or preproc_str.endswith("_IQR"):
             return preproc_str

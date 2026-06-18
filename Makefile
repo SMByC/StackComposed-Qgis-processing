@@ -48,9 +48,9 @@ PY_FILES = \
 	StackComposed_plugin.py \
 	StackComposed_provider.py
 
-UI_FILES = 
+UI_FILES =
 
-EXTRAS = metadata.txt 
+EXTRAS = metadata.txt
 
 EXTRA_DIRS = core utils icons extlibs
 
@@ -130,15 +130,22 @@ derase:
 	@echo "-------------------------"
 	rm -Rf $(HOME)/$(QGISDIR)/python/plugins/$(PLUGINNAME)
 
-zip: deploy dclean
+zip: compile
 	@echo
 	@echo "---------------------------"
 	@echo "Creating plugin zip bundle."
 	@echo "---------------------------"
-	# The zip target deploys the plugin and creates a zip file with the deployed
-	# content. You can then upload the zip file on http://plugins.qgis.org
 	rm -f $(PLUGINNAME).zip
-	cd $(HOME)/$(QGISDIR)/python/plugins; zip -9r $(CURDIR)/$(PLUGINNAME).zip $(PLUGINNAME)
+	mkdir -p .pkg_tmp/$(PLUGINNAME)
+	cp -f $(PY_FILES) $(EXTRAS) .pkg_tmp/$(PLUGINNAME)/
+	@for d in $(EXTRA_DIRS); do \
+		if [ -d "$$d" ]; then cp -rf $$d .pkg_tmp/$(PLUGINNAME)/; fi; \
+	done
+	find .pkg_tmp -type d \( -name "__pycache__" -o -name "*.dist-info" -o -name "*.egg-info" \) -prune -exec rm -rf {} \;
+	find .pkg_tmp -type f \( -name "*.pyc" -o -name "*.pyo" -o -name "*.sh"  -o -name "*.db" \) -delete
+	cd .pkg_tmp && zip -9r ../$(PLUGINNAME).zip $(PLUGINNAME)
+	rm -rf .pkg_tmp
+	@echo "Created package: $(PLUGINNAME).zip"
 
 package: compile
 	# Create a zip package of the plugin named $(PLUGINNAME).zip.
