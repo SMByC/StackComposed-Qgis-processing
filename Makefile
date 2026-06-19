@@ -59,14 +59,14 @@ extlibs:
 	@echo "--------------------------------"
 	rm -rf extlibs_tmp
 	rm -f extlibs.zip
-	mkdir -p extlibs_tmp/extlibs
+	mkdir -p extlibs_tmp
 	pip install \
-		--target=extlibs_tmp/extlibs \
+		--target=extlibs_tmp \
 		--no-deps \
 		$(EXTLIBS_DEPS)
-	find extlibs_tmp/extlibs -type d \( -name "__pycache__" -o -name "*.dist-info" -o -name "*.egg-info" -o -name "tests" -o -name "test" -o -name "bin" \) -prune -exec rm -rf {} + 2>/dev/null || true
-	find extlibs_tmp/extlibs -type f \( -name "*.pyc" -o -name "*.pyo" -o -name "*.so" -o -name "*.dll" -o -name "*.dylib" \) -delete 2>/dev/null || true
-	cd extlibs_tmp && zip -9r ../extlibs.zip extlibs
+	find extlibs_tmp -type d \( -name "__pycache__" -o -name "*.dist-info" -o -name "*.egg-info" -o -name "tests" -o -name "test" -o -name "bin" \) -prune -exec rm -rf {} + 2>/dev/null || true
+	find extlibs_tmp -type f \( -name "*.pyc" -o -name "*.pyo" -o -name "*.so" -o -name "*.dll" -o -name "*.dylib" \) -delete 2>/dev/null || true
+	cd extlibs_tmp && zip -9r ../extlibs.zip .
 	rm -rf extlibs_tmp
 	@echo "Created package: extlibs.zip"
 

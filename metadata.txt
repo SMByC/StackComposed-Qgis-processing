@@ -6,7 +6,7 @@ about=StackComposed computes a per-pixel statistic over a stack of georeferenced
     covers all inputs, reads each processing chunk from every image, masks nodata values as NaN, and writes the selected
     statistic to a GeoTIFF.
 
-version=23.8
+version=26.6
 qgisMinimumVersion=3.36
 qgisMaximumVersion=4.99
 

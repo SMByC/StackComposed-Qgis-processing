@@ -18,9 +18,24 @@
  *                                                                         *
  ***************************************************************************/
 """
+import importlib
 import os
 import site
-import pkg_resources
+
+from qgis.PyQt.QtWidgets import QMessageBox
+
+from .utils import extlibs
+
+
+def check_dependencies():
+    try:
+        importlib.import_module("dask.array")
+        callbacks = importlib.import_module("dask.callbacks")
+        getattr(callbacks, "Callback")
+
+        return True
+    except (AttributeError, ImportError):
+        return False
 
 
 def pre_init_plugin():
@@ -28,8 +43,6 @@ def pre_init_plugin():
     if os.path.isdir(extra_libs_path):
         # add to python path
         site.addsitedir(extra_libs_path)
-        # pkg_resources doesn't listen to changes on sys.path.
-        pkg_resources.working_set.add_entry(extra_libs_path)
 
 # noinspection PyPep8Naming
 def classFactory(iface):  # pylint: disable=invalid-name
@@ -41,6 +54,22 @@ def classFactory(iface):  # pylint: disable=invalid-name
     # load extra python dependencies
     pre_init_plugin()
 
-    #
-    from StackComposed.StackComposed_plugin import StackComposedPlugin
+    if not check_dependencies():
+        extlibs.install()
+        pre_init_plugin()
+
+        if not check_dependencies():
+            msg = (
+                "Error loading libraries for StackComposed.\n\n"
+                "Read the install instructions here:\n"
+                "https://github.com/SMByC/StackComposed-Qgis-processing#installation"
+            )
+            QMessageBox.critical(
+                None,
+                "StackComposed: Error loading",
+                msg,
+                QMessageBox.StandardButton.Ok,
+            )
+
+    from .StackComposed_plugin import StackComposedPlugin
     return StackComposedPlugin()
