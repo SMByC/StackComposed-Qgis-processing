@@ -21,25 +21,6 @@
 #################################################
 
 
-#Add iso code for any locales you want to support here (space separated)
-# default is no locales
-# LOCALES = af
-LOCALES =
-
-# If locales are enabled, set the name of the lrelease binary on your system. If
-# you have trouble compiling the translations, you may have to specify the full path to
-# lrelease
-#LRELEASE = lrelease
-#LRELEASE = lrelease-qt4
-
-
-# translation
-SOURCES = \
-	__init__.py \
-	StackComposed_algorithm.py \
-	StackComposed_plugin.py \
-	StackComposed_provider.py
-
 PLUGINNAME = StackComposed
 
 PY_FILES = \
@@ -48,118 +29,64 @@ PY_FILES = \
 	StackComposed_plugin.py \
 	StackComposed_provider.py
 
-UI_FILES =
+EXTRAS = metadata.txt LICENSE
 
-EXTRAS = metadata.txt
-
-EXTRA_DIRS = core utils icons extlibs
-
-PEP8EXCLUDE=pydev,conf.py,third_party,ui
-
-# Install paths. Defaults target QGIS 4; override for QGIS 3 builds, e.g.:
-#   make deploy QGISDIR=.local/share/QGIS/QGIS3/profiles/default
-QGISDIR?=.local/share/QGIS/QGIS4/profiles/default
+EXTRA_DIRS = core utils icons
 
 #################################################
 # Normally you would not need to edit below here
 #################################################
 
-HELP = README.md
-
 PLUGIN_UPLOAD = python3 plugin_upload.py -u xaviercll
 
-default: compile
+EXTLIBS_DEPS = \
+	dask==2024.7.1 \
+	toolz \
+	cloudpickle \
+	fsspec \
+	packaging \
+	partd \
+	locket
 
-compile:
+default: zip
 
-%.qm : %.ts
-	$(LRELEASE) $<
+.PHONY: default extlibs zip upload clean
 
-test: compile transcompile
+extlibs:
 	@echo
-	@echo "----------------------"
-	@echo "Regression Test Suite"
-	@echo "----------------------"
+	@echo "--------------------------------"
+	@echo "Creating extlibs zip bundle."
+	@echo "--------------------------------"
+	rm -rf extlibs_tmp
+	rm -f extlibs.zip
+	mkdir -p extlibs_tmp/extlibs
+	pip install \
+		--target=extlibs_tmp/extlibs \
+		--no-deps \
+		$(EXTLIBS_DEPS)
+	find extlibs_tmp/extlibs -type d \( -name "__pycache__" -o -name "*.dist-info" -o -name "*.egg-info" -o -name "tests" -o -name "test" -o -name "bin" \) -prune -exec rm -rf {} + 2>/dev/null || true
+	find extlibs_tmp/extlibs -type f \( -name "*.pyc" -o -name "*.pyo" -o -name "*.so" -o -name "*.dll" -o -name "*.dylib" \) -delete 2>/dev/null || true
+	cd extlibs_tmp && zip -9r ../extlibs.zip extlibs
+	rm -rf extlibs_tmp
+	@echo "Created package: extlibs.zip"
 
-	@# Preceding dash means that make will continue in case of errors
-	@-export PYTHONPATH=`pwd`:$(PYTHONPATH); \
-		export QGIS_DEBUG=0; \
-		export QGIS_LOG_FILE=/dev/null; \
-		nosetests -v --with-id --with-coverage --cover-package=. \
-		3>&1 1>&2 2>&3 3>&- || true
-	@echo "----------------------"
-	@echo "If you get a 'no module named qgis.core error, try sourcing"
-	@echo "the helper script we have provided first then run make test."
-	@echo "e.g. source run-env-linux.sh <path to qgis install>; make test"
-	@echo "----------------------"
-
-deploy: compile doc transcompile
-	@echo
-	@echo "------------------------------------------"
-	@echo "Deploying plugin to your QGIS 4 directory."
-	@echo "------------------------------------------"
-	# The deploy  target only works on unix like operating system where
-	# the Python plugin directory is located at:
-	# $HOME/$(QGISDIR)/python/plugins
-	mkdir -p $(HOME)/$(QGISDIR)/python/plugins/$(PLUGINNAME)
-	cp -vf $(PY_FILES) $(HOME)/$(QGISDIR)/python/plugins/$(PLUGINNAME)
-	#cp -vf $(UI_FILES) $(HOME)/$(QGISDIR)/python/plugins/$(PLUGINNAME)
-	cp -vf $(EXTRAS) $(HOME)/$(QGISDIR)/python/plugins/$(PLUGINNAME)
-	#cp -vfr i18n $(HOME)/$(QGISDIR)/python/plugins/$(PLUGINNAME)
-	cp -vfr $(HELP) $(HOME)/$(QGISDIR)/python/plugins/$(PLUGINNAME)/help
-	# Copy extra directories if any
-	cp -vfr $(EXTRA_DIRS) $(HOME)/$(QGISDIR)/python/plugins/$(PLUGINNAME)
-
-
-# The dclean target removes compiled python files from plugin directory
-# also deletes any .git entry
-dclean:
-	@echo
-	@echo "-----------------------------------"
-	@echo "Removing any compiled python files."
-	@echo "-----------------------------------"
-	find $(HOME)/$(QGISDIR)/python/plugins/$(PLUGINNAME) -iname "*.pyc" -delete
-	find $(HOME)/$(QGISDIR)/python/plugins/$(PLUGINNAME) -iname ".git" -prune -exec rm -Rf {} \;
-	find $(HOME)/$(QGISDIR)/python/plugins/$(PLUGINNAME) -iname "__pycache__" -prune -exec rm -Rf {} \;
-
-
-derase:
-	@echo
-	@echo "-------------------------"
-	@echo "Removing deployed plugin."
-	@echo "-------------------------"
-	rm -Rf $(HOME)/$(QGISDIR)/python/plugins/$(PLUGINNAME)
-
-zip: compile
+zip:
 	@echo
 	@echo "---------------------------"
 	@echo "Creating plugin zip bundle."
 	@echo "---------------------------"
 	rm -f $(PLUGINNAME).zip
+	rm -rf .pkg_tmp
 	mkdir -p .pkg_tmp/$(PLUGINNAME)
 	cp -f $(PY_FILES) $(EXTRAS) .pkg_tmp/$(PLUGINNAME)/
 	@for d in $(EXTRA_DIRS); do \
 		if [ -d "$$d" ]; then cp -rf $$d .pkg_tmp/$(PLUGINNAME)/; fi; \
 	done
-	find .pkg_tmp -type d \( -name "__pycache__" -o -name "*.dist-info" -o -name "*.egg-info" \) -prune -exec rm -rf {} \;
-	find .pkg_tmp -type f \( -name "*.pyc" -o -name "*.pyo" -o -name "*.sh"  -o -name "*.db" \) -delete
+	find .pkg_tmp -type d \( -name "__pycache__" -o -name "*.dist-info" -o -name "*.egg-info" -o -name "tests" -o -name "test" -o -name "bin" \) -prune -exec rm -rf {} + 2>/dev/null || true
+	find .pkg_tmp -type f \( -name "*.pyc" -o -name "*.pyo" -o -name "*.sh" -o -name "*.db" -o -name "*.so" -o -name "*.dll" -o -name "*.dylib" \) -delete 2>/dev/null || true
 	cd .pkg_tmp && zip -9r ../$(PLUGINNAME).zip $(PLUGINNAME)
 	rm -rf .pkg_tmp
 	@echo "Created package: $(PLUGINNAME).zip"
-
-package: compile
-	# Create a zip package of the plugin named $(PLUGINNAME).zip.
-	# This requires use of git (your plugin development directory must be a
-	# git repository).
-	# To use, pass a valid commit or tag as follows:
-	#   make package VERSION=Version_0.3.2
-	@echo
-	@echo "------------------------------------"
-	@echo "Exporting plugin to zip package.    "
-	@echo "------------------------------------"
-	rm -f $(PLUGINNAME).zip
-	git archive --prefix=$(PLUGINNAME)/ -o $(PLUGINNAME).zip $(VERSION)
-	echo "Created package: $(PLUGINNAME).zip"
 
 upload: zip
 	@echo
@@ -168,65 +95,12 @@ upload: zip
 	@echo "-------------------------------------"
 	$(PLUGIN_UPLOAD) $(PLUGINNAME).zip
 
-transup:
-	@echo
-	@echo "------------------------------------------------"
-	@echo "Updating translation files with any new strings."
-	@echo "------------------------------------------------"
-	@chmod +x scripts/update-strings.sh
-	@scripts/update-strings.sh $(LOCALES)
-
-transcompile:
-	@echo
-	@echo "----------------------------------------"
-	@echo "Compiled translation files to .qm files."
-	@echo "----------------------------------------"
-	#@chmod +x scripts/compile-strings.sh
-	#@scripts/compile-strings.sh $(LRELEASE) $(LOCALES)
-
-transclean:
-	@echo
-	@echo "------------------------------------"
-	@echo "Removing compiled translation files."
-	@echo "------------------------------------"
-	rm -f i18n/*.qm
-
 clean:
 	@echo
 	@echo "------------------------------------"
 	@echo "Removing generated files"
 	@echo "------------------------------------"
+	rm -rf .pkg_tmp extlibs_tmp
+	rm -f $(PLUGINNAME).zip extlibs.zip
 	find . -name "*.pyc" -delete
 	find . -name "__pycache__" -type d -exec rm -rf {} + 2>/dev/null || true
-
-doc:
-	@echo
-	@echo "------------------------------------"
-	@echo "Building documentation using sphinx."
-	@echo "------------------------------------"
-	# cd help; make html
-
-pylint:
-	@echo
-	@echo "-----------------"
-	@echo "Pylint violations"
-	@echo "-----------------"
-	@pylint --reports=n --rcfile=pylintrc . || true
-	@echo
-	@echo "----------------------"
-	@echo "If you get a 'no module named qgis.core' error, try sourcing"
-	@echo "the helper script we have provided first then run make pylint."
-	@echo "e.g. source run-env-linux.sh <path to qgis install>; make pylint"
-	@echo "----------------------"
-
-# Run pep8 style checking
-#http://pypi.python.org/pypi/pep8
-pep8:
-	@echo
-	@echo "-----------"
-	@echo "PEP8 issues"
-	@echo "-----------"
-	@pep8 --repeat --ignore=E203,E121,E122,E123,E124,E125,E126,E127,E128 --exclude $(PEP8EXCLUDE) . || true
-	@echo "-----------"
-	@echo "Ignored in PEP8 check:"
-	@echo $(PEP8EXCLUDE)
