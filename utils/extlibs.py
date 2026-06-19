@@ -23,6 +23,7 @@ import os
 import shutil
 import ssl
 import tempfile
+import urllib.parse
 import urllib.request
 import zipfile
 
@@ -42,6 +43,7 @@ from qgis.PyQt.QtWidgets import (
 
 PLUGIN_NAME = "StackComposed"
 PLUGIN_REPOSITORY = "https://github.com/SMByC/StackComposed-Qgis-processing"
+DOWNLOAD_URL_SCHEMES = {"https"}
 
 
 def _get_plugin_version() -> str:
@@ -159,8 +161,11 @@ class DownloadAndUnzip(QDialog):
         if self._zip_path is None:
             return False
         try:
+            parsed_url = urllib.parse.urlparse(self.url)
+            if parsed_url.scheme.lower() not in DOWNLOAD_URL_SCHEMES:
+                raise ValueError(f"Unsupported download URL scheme: {parsed_url.scheme}")
             req = urllib.request.Request(self.url, headers={"User-Agent": PLUGIN_NAME})
-            with urllib.request.urlopen(req, timeout=60, context=ssl.create_default_context()) as response:
+            with urllib.request.urlopen(req, timeout=60, context=ssl.create_default_context()) as response:  # nosec B310
                 raw_length = response.getheader("Content-Length")
                 total_length: int | None = int(raw_length) if raw_length else None
                 self.progress_bar.setRange(0, 100 if total_length else 0)
