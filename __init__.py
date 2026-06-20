@@ -70,6 +70,8 @@ def classFactory(iface):  # pylint: disable=invalid-name
                 msg,
                 QMessageBox.StandardButton.Ok,
             )
-
+    # Register icons under :/plugins/StackComposed/ before the plugin class is imported
+    from . import resources  # noqa: F401
     from .StackComposed_plugin import StackComposedPlugin
+
     return StackComposedPlugin()

@@ -27,9 +27,10 @@ PY_FILES = \
 	__init__.py \
 	StackComposed_algorithm.py \
 	StackComposed_plugin.py \
-	StackComposed_provider.py
+	StackComposed_provider.py \
+	resources.py
 
-EXTRAS = metadata.txt LICENSE
+EXTRAS = metadata.txt LICENSE resources.qrc
 
 EXTRA_DIRS = core utils icons
 
@@ -50,7 +51,19 @@ EXTLIBS_DEPS = \
 
 default: zip
 
-.PHONY: default extlibs zip upload clean
+.PHONY: default compile extlibs zip upload clean
+
+compile:
+	@echo
+	@echo "--------------------------------"
+	@echo "Compiling Qt resources."
+	@echo "--------------------------------"
+	pyrcc5 -o resources.py resources.qrc
+	@# Replace the PyQt5 import with qgis.PyQt so the file works on both
+	@# QGIS 3.36 (Qt 5) and QGIS 4 (Qt 6) via QGIS's own PyQt shim.
+	sed -i 's/^from PyQt5 import QtCore$$/from qgis.PyQt import QtCore/' resources.py
+	sed -i 's/^# Created by: The Resource Compiler for PyQt5.*$$/# Resource object code (auto-generated -- do not edit by hand)\n# Regenerate with: make compile\n# Compatible with QGIS 3.36 (Qt 5) and QGIS 4 (Qt 6) via qgis.PyQt shim./' resources.py
+	@echo "Created: resources.py"
 
 extlibs:
 	@echo
@@ -104,3 +117,4 @@ clean:
 	rm -f $(PLUGINNAME).zip extlibs.zip
 	find . -name "*.pyc" -delete
 	find . -name "__pycache__" -type d -exec rm -rf {} + 2>/dev/null || true
+	rm -f resources.py
